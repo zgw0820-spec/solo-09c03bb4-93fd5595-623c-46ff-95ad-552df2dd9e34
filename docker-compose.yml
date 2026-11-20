@@ -1,11 +1,25 @@
 name: faultlog
 
+# 所有口令均由 Compose 变量预置（可用 .env 覆盖，.env 已在 .gitignore 中）。
+# API_DB_PASSWORD      —— api_user 当前（旧）口令
+# API_DB_PASSWORD_NEW  —— api_user 轮换后的新口令
+# ROTATOR_PASSWORD     —— 最小权限轮换角色 api_rotator 的口令
+# OPS_TOKEN            —— 独立运维令牌（仅能调用 /ops/rotate-password 等运维接口）
+x-api-env: &api-env
+  # 业务连接池：旧口令 / 新口令两条连接串，轮换后池在新串上重建。
+  DATABASE_URL: postgresql://api_user:${API_DB_PASSWORD:-api_dev_password}@db:5432/faultlog
+  DATABASE_URL_NEW: postgresql://api_user:${API_DB_PASSWORD_NEW:-api_dev_password_new}@db:5432/faultlog
+  # 轮换专用角色：无 CREATEROLE，仅能经属主函数改 api_user 的口令。
+  ROTATOR_DATABASE_URL: postgresql://api_rotator:${ROTATOR_PASSWORD:-rotator_dev_password}@db:5432/faultlog
+  # 预置令牌（逗号分隔的 token:team）。生产环境应通过环境变量/密钥管理注入，勿用默认值。
+  TEAM_TOKENS: ${TEAM_TOKENS:-token-alpha:team_a,token-bravo:team_b}
+  # 独立运维令牌：与班组令牌分离，Swagger 中作为「运维令牌」授权。
+  OPS_TOKEN: ${OPS_TOKEN:-ops-token-dev}
+  EXPECTED_INSTANCES: "api1,api2"
+  ROTATION_WATCH_INTERVAL: ${ROTATION_WATCH_INTERVAL:-1}
+
 x-api-common: &api-common
   build: ./services/api
-  environment:
-    DATABASE_URL: postgresql://api_user:${API_DB_PASSWORD:-api_dev_password}@db:5432/faultlog
-    # 预置令牌（逗号分隔的 token:team）。生产环境应通过环境变量/密钥管理注入，勿用默认值。
-    TEAM_TOKENS: ${TEAM_TOKENS:-token-alpha:team_a,token-bravo:team_b}
   depends_on:
     db:
       condition: service_healthy
@@ -18,7 +32,10 @@ services:
       POSTGRES_DB: faultlog
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_dev_password}
+      # 旧口令建角色；新口令与轮换角色口令供初始化脚本预置。
       API_DB_PASSWORD: ${API_DB_PASSWORD:-api_dev_password}
+      API_DB_PASSWORD_NEW: ${API_DB_PASSWORD_NEW:-api_dev_password_new}
+      ROTATOR_PASSWORD: ${ROTATOR_PASSWORD:-rotator_dev_password}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
@@ -32,11 +49,17 @@ services:
 
   api1:
     <<: *api-common
+    environment:
+      <<: *api-env
+      INSTANCE_ID: "api1"
     ports:
       - "127.0.0.1:8001:8000"
 
   api2:
     <<: *api-common
+    environment:
+      <<: *api-env
+      INSTANCE_ID: "api2"
     ports:
       - "127.0.0.1:8002:8000"
 
