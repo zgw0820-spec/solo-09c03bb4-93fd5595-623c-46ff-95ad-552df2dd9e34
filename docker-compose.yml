@@ -1,0 +1,44 @@
+name: faultlog
+
+x-api-common: &api-common
+  build: ./services/api
+  environment:
+    DATABASE_URL: postgresql://api_user:${API_DB_PASSWORD:-api_dev_password}@db:5432/faultlog
+    # 预置令牌（逗号分隔的 token:team）。生产环境应通过环境变量/密钥管理注入，勿用默认值。
+    TEAM_TOKENS: ${TEAM_TOKENS:-token-alpha:team_a,token-bravo:team_b}
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: faultlog
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_dev_password}
+      API_DB_PASSWORD: ${API_DB_PASSWORD:-api_dev_password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d faultlog"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    # 数据库不对外暴露端口，仅 compose 内部网络可达。
+
+  api1:
+    <<: *api-common
+    ports:
+      - "127.0.0.1:8001:8000"
+
+  api2:
+    <<: *api-common
+    ports:
+      - "127.0.0.1:8002:8000"
+
+volumes:
+  pgdata:
